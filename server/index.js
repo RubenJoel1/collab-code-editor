@@ -21,8 +21,24 @@ app.use(express.json());
 const versionRoutes = require("./routes/versions");
 app.use("/api/versions", versionRoutes);
 
-// Socket.io handler (T3, T4, T5)
+const runRoute = require("./routes/run");
+app.use("/api/run", runRoute);
+
+// Socket.io handler
 require("./socket/socketHandler")(io);
 
 const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+async function start() {
+  // Initialize PostgreSQL schema if a database is configured
+  try {
+    const initSchema = require("./db/init");
+    await initSchema();
+  } catch (err) {
+    console.error("Schema init failed:", err.message);
+  }
+
+  httpServer.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+start();
