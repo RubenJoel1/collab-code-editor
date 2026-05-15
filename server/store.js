@@ -32,4 +32,7 @@ function removeVersion(versionId) {
   return false;
 }
 
-module.exports = { rooms, versionHistory, addVersion, getVersions, removeVersion };
+// token (hex string) → { roomId, socketId }
+const sessionTokens = new Map();
+
+module.exports = { rooms, versionHistory, addVersion, getVersions, removeVersion, sessionTokens };

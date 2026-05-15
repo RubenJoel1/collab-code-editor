@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const { requireAuth } = require("../middleware/auth");
 
 // Monaco language ID → Wandbox compiler name
 const COMPILERS = {
@@ -16,7 +17,7 @@ const COMPILERS = {
   shell:      { compiler: "bash" },
 };
 
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   const { language, code } = req.body;
 
   const config = COMPILERS[language];

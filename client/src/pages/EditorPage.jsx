@@ -57,7 +57,7 @@ function formatTime(iso) {
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ users, myUsername, myRole, versions, onSave, onRestore, onDelete, isSaving, saveMsg }) {
+function Sidebar({ users, myUsername, myRole, versions, onSave, onRestore, onDelete, onRoleChange, isSaving, saveMsg }) {
   const [tab, setTab] = useState("collaborators");
 
   const tabBtn = (id, label) => ({
@@ -73,6 +73,7 @@ function Sidebar({ users, myUsername, myRole, versions, onSave, onRestore, onDel
   });
 
   const canWrite = myRole === "owner" || myRole === "editor";
+  const isOwner = myRole === "owner";
 
   return (
     <aside
@@ -113,16 +114,38 @@ function Sidebar({ users, myUsername, myRole, versions, onSave, onRestore, onDel
               Collaborators ({users.length})
             </p>
             {users.map((u) => (
-              <div key={u.socketId} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.color, flexShrink: 0 }} />
-                <div style={{ overflow: "hidden" }}>
-                  <div style={{ fontSize: "12px", color: u.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {u.username}{u.username === myUsername ? " (you)" : ""}
-                  </div>
-                  <div style={{ fontSize: "10px", color: ROLE_COLORS[u.role] ?? "#888" }}>
-                    {ROLE_LABELS[u.role] ?? u.role}
+              <div key={u.socketId} style={{ marginBottom: "10px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.color, flexShrink: 0 }} />
+                  <div style={{ overflow: "hidden", flex: 1 }}>
+                    <div style={{ fontSize: "12px", color: u.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {u.username}{u.username === myUsername ? " (you)" : ""}
+                    </div>
+                    <div style={{ fontSize: "10px", color: ROLE_COLORS[u.role] ?? "#888" }}>
+                      {ROLE_LABELS[u.role] ?? u.role}
+                    </div>
                   </div>
                 </div>
+                {/* Owner can promote/demote non-owner users */}
+                {isOwner && u.username !== myUsername && u.role !== "owner" && (
+                  <div style={{ display: "flex", gap: "4px", marginTop: "4px", marginLeft: "16px" }}>
+                    {u.role === "viewer" ? (
+                      <button
+                        onClick={() => onRoleChange(u.socketId, "editor")}
+                        style={{ ...btnStyle, fontSize: "10px", padding: "1px 6px", color: "#34D399", borderColor: "#1a4d2e" }}
+                      >
+                        Promote
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onRoleChange(u.socketId, "viewer")}
+                        style={{ ...btnStyle, fontSize: "10px", padding: "1px 6px", color: "#9ca3af", borderColor: "#3c3c3c" }}
+                      >
+                        Demote
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </>
@@ -193,12 +216,14 @@ function Sidebar({ users, myUsername, myRole, versions, onSave, onRestore, onDel
                       Restore
                     </button>
                   )}
-                  <button
-                    onClick={() => onDelete(v.version_id)}
-                    style={{ ...btnStyle, fontSize: "10px", padding: "2px 6px", color: "#F87171", borderColor: "#6b2b2b" }}
-                  >
-                    Delete
-                  </button>
+                  {canWrite && (
+                    <button
+                      onClick={() => onDelete(v.version_id)}
+                      style={{ ...btnStyle, fontSize: "10px", padding: "2px 6px", color: "#F87171", borderColor: "#6b2b2b" }}
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -215,17 +240,17 @@ export default function EditorPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const username = location.state?.username;
-  const requestedRole = location.state?.role ?? "editor";
 
   const socketRef = useRef(null);
   const editorRef = useRef(null);
   const pendingContent = useRef(null);
   const isRemoteChange = useRef(false);
+  const sessionTokenRef = useRef(null);
 
-  const [myRole, setMyRole] = useState(requestedRole);
+  const [myRole, setMyRole] = useState("viewer");
   const [users, setUsers] = useState([]);
   const [cursors, setCursors] = useState({});
-  const [scrollTick, setScrollTick] = useState(0); // incremented on editor scroll to reposition overlays
+  const [scrollTick, setScrollTick] = useState(0);
 
   // IDE settings
   const [language, setLanguage] = useState("javascript");
@@ -252,14 +277,22 @@ export default function EditorPage() {
     if (!username) navigate("/");
   }, [username, navigate]);
 
+  const authHeaders = useCallback(() => {
+    const token = sessionTokenRef.current;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
   const fetchVersions = useCallback(async () => {
+    if (!sessionTokenRef.current) return;
     try {
-      const { data } = await axios.get(`${SERVER_URL}/api/versions/${roomId}`);
+      const { data } = await axios.get(`${SERVER_URL}/api/versions/${roomId}`, {
+        headers: authHeaders(),
+      });
       setVersions(data.versions ?? []);
     } catch {
       // DB may not be configured; silently ignore
     }
-  }, [roomId]);
+  }, [roomId, authHeaders]);
 
   useEffect(() => {
     if (!username) return;
@@ -267,9 +300,11 @@ export default function EditorPage() {
     const socket = io(SERVER_URL);
     socketRef.current = socket;
 
-    socket.emit("join", { roomId, username, role: requestedRole });
+    // Role is no longer sent from the client — the server assigns it
+    socket.emit("join", { roomId, username });
 
-    socket.on("init-document", ({ content, language: lang, role }) => {
+    socket.on("init-document", ({ content, language: lang, role, sessionToken }) => {
+      if (sessionToken) sessionTokenRef.current = sessionToken;
       if (role) setMyRole(role);
       if (lang) setLanguage(lang);
       if (editorRef.current) {
@@ -278,6 +313,12 @@ export default function EditorPage() {
       } else {
         pendingContent.current = content;
       }
+      // Fetch versions only after we have a valid session token
+      fetchVersions();
+    });
+
+    socket.on("role-changed", ({ role }) => {
+      setMyRole(role);
     });
 
     socket.on("code-change", ({ delta }) => {
@@ -308,16 +349,10 @@ export default function EditorPage() {
       if (success) fetchVersions();
     });
 
-    // Another user saved – refresh our version list
     socket.on("version-saved", fetchVersions);
 
     return () => socket.disconnect();
-  }, [roomId, username, requestedRole, fetchVersions]);
-
-  // Load version history on mount
-  useEffect(() => {
-    if (username) fetchVersions();
-  }, [username, fetchVersions]);
+  }, [roomId, username, fetchVersions]);
 
   const handleCodeChange = useCallback(
     (value) => {
@@ -333,7 +368,6 @@ export default function EditorPage() {
       editor.setValue(pendingContent.current);
       pendingContent.current = null;
     }
-    // Re-render cursor overlays whenever the editor scrolls
     editor.onDidScrollChange(() => setScrollTick((t) => t + 1));
   }, []);
 
@@ -369,13 +403,15 @@ export default function EditorPage() {
   const handleDelete = useCallback(
     async (versionId) => {
       try {
-        await axios.delete(`${SERVER_URL}/api/versions/${versionId}`);
+        await axios.delete(`${SERVER_URL}/api/versions/${versionId}`, {
+          headers: authHeaders(),
+        });
         setVersions((prev) => prev.filter((v) => v.version_id !== versionId));
       } catch (err) {
         console.error("Delete snapshot failed:", err.message);
       }
     },
-    []
+    [authHeaders]
   );
 
   const handleRestore = useCallback(
@@ -393,6 +429,13 @@ export default function EditorPage() {
     [roomId]
   );
 
+  const handleRoleChange = useCallback(
+    (targetSocketId, newRole) => {
+      socketRef.current?.emit("set-user-role", { roomId, targetSocketId, newRole });
+    },
+    [roomId]
+  );
+
   const handleRun = useCallback(async () => {
     if (isRunning) return;
     const code = editorRef.current?.getValue() ?? "";
@@ -400,14 +443,18 @@ export default function EditorPage() {
     setOutputOpen(true);
     setRunResult(null);
     try {
-      const { data } = await axios.post(`${SERVER_URL}/api/run`, { language, code });
+      const { data } = await axios.post(
+        `${SERVER_URL}/api/run`,
+        { language, code },
+        { headers: authHeaders() }
+      );
       setRunResult(data);
     } catch (err) {
       setRunResult({ error: err.response?.data?.error ?? err.message });
     } finally {
       setIsRunning(false);
     }
-  }, [isRunning, language]);
+  }, [isRunning, language, authHeaders]);
 
   const langLabel = LANGUAGES.find((l) => l.value === language)?.label ?? language;
 
@@ -460,7 +507,6 @@ export default function EditorPage() {
 
         <div style={{ flex: 1 }} />
 
-        {/* Save button – only for owners/editors */}
         {canWrite && (
           <button
             onClick={handleSave}
@@ -478,7 +524,6 @@ export default function EditorPage() {
           </button>
         )}
 
-        {/* Run button */}
         <button
           style={{
             ...btnStyle,
@@ -501,7 +546,6 @@ export default function EditorPage() {
       {/* ── Main row ── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-        {/* Sidebar (T9) */}
         <Sidebar
           users={users}
           myUsername={username}
@@ -510,6 +554,7 @@ export default function EditorPage() {
           onSave={handleSave}
           onRestore={handleRestore}
           onDelete={handleDelete}
+          onRoleChange={handleRoleChange}
           isSaving={isSaving}
           saveMsg={saveMsg}
         />
@@ -529,12 +574,10 @@ export default function EditorPage() {
               readOnly={!canWrite}
             />
 
-            {/* Remote cursor overlays — positioned via Monaco's getScrolledVisiblePosition */}
-            {/* scrollTick is read here only to re-render when the editor scrolls */}
             {scrollTick >= 0 && Object.entries(cursors).map(([id, { username: uname, color, position }]) => {
               if (!position || !editorRef.current) return null;
               const px = editorRef.current.getScrolledVisiblePosition(position);
-              if (!px) return null; // line is scrolled out of view
+              if (!px) return null;
               return (
                 <div
                   key={id}
@@ -546,7 +589,6 @@ export default function EditorPage() {
                     zIndex: 10,
                   }}
                 >
-                  {/* Label sits above the cursor bar without pushing it down */}
                   <div style={{
                     position: "absolute",
                     bottom: "100%",
