@@ -240,6 +240,7 @@ export default function EditorPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const username = location.state?.username;
+  const requestedRole = location.state?.role;
 
   const socketRef = useRef(null);
   const editorRef = useRef(null);
@@ -301,7 +302,7 @@ export default function EditorPage() {
     socketRef.current = socket;
 
     // Role is no longer sent from the client — the server assigns it
-    socket.emit("join", { roomId, username });
+    socket.emit("join", { roomId, username, requestedRole });
 
     socket.on("init-document", ({ content, language: lang, role, sessionToken }) => {
       if (sessionToken) sessionTokenRef.current = sessionToken;

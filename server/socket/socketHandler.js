@@ -29,7 +29,7 @@ module.exports = function (io) {
   io.on("connection", (socket) => {
 
     // socket.once prevents duplicate handler registration if join fires more than once
-    socket.once("join", async ({ roomId, username }) => {
+    socket.once("join", async ({ roomId, username, requestedRole }) => {
       socket.join(roomId);
       socket.data.roomId = roomId;
 
@@ -50,9 +50,8 @@ module.exports = function (io) {
 
       const room = rooms.get(roomId);
 
-      // First joiner is owner; all others start as viewer — owner promotes via set-user-role
       const isFirstUser = room.users.size === 0;
-      const role = isFirstUser ? "owner" : "viewer";
+      const role = isFirstUser ? "owner" : (requestedRole === "editor" ? "editor" : "viewer");
 
       // Issue a server-generated session token used to authenticate REST calls
       const token = crypto.randomBytes(32).toString("hex");
