@@ -5,7 +5,6 @@ import axios from "axios";
 import CodeEditor from "../components/CodeEditor";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3001";
-console.log("SERVER_URL:", SERVER_URL);
 
 const LANGUAGES = [
   { label: "JavaScript", value: "javascript" },
